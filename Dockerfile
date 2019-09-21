@@ -17,4 +17,5 @@ COPY --from=build /usr/src/aemterliste_rs/deployment /
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER 1000
 EXPOSE 8000
-CMD ["SSL_CERT_DIR=/etc/ssl/certs ./aemterliste_rs"]
+ENV SSL_CERT_DIR /etc/ssl/certs
+CMD ["./aemterliste_rs"]
