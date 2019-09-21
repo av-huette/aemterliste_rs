@@ -1,7 +1,6 @@
 #![recursion_limit = "1024"]
 #![feature(proc_macro_hygiene, decl_macro)]
 
-use crate::TxtFiles::SecondaryElectionJson;
 use maud::DOCTYPE;
 use maud::{html, Markup};
 use rocket::{get, routes};
@@ -62,15 +61,6 @@ fn index() -> Markup {
     };
 }
 
-fn build_html() -> Result<Markup> {
-    let content = html! {
-        h1 { "Hello, " ("name") ("4".parse::<u32>()?) "!" }
-        p { "This is a paragraph!" }
-        p { "Hello World" }
-    };
-    return Ok(content);
-}
-
 fn read_file(filepath: &str) -> Result<String> {
     let contents = fs::read_to_string(filepath)?;
     return Ok(contents);
@@ -115,10 +105,6 @@ fn check_if_json(s: &str) -> bool {
     return opt.is_ok();
 }
 
-fn millis_duration_between_caching() -> u32 {
-    return 5u32 * 60u32 * 1_000u32;
-}
-
 const RESERVIERUNGEN_LINKS_TITLE: &'static [&'static str] = &[
     "Gästezimmer Karlsruhe (Waldhornstraße)",
     "Saal Karlsruhe",
@@ -149,7 +135,7 @@ fn generate_full_html() -> Result<Markup> {
     //add body
     let content = html! {
         (DOCTYPE)
-        html {
+        html lang="de" {
             head {
                 (generate_header_html())
             }
@@ -164,7 +150,7 @@ fn generate_full_html() -> Result<Markup> {
 fn generate_header_html() -> Markup {
     return html! {
         meta charset="utf-8" {}
-        meta name = "viewport" content = "width=device-width, initial-scale=1, maximum-scale=1" {}
+        meta name = "viewport" content = "width=device-width, initial-scale=1, maximum-scale=10" {}
         link rel="preload" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'" {}
         noscript {
             link  rel = "stylesheet" type="text/css" crossorigin="anonymous" href = "https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" {}
@@ -229,13 +215,13 @@ fn elected_user_html() -> Result<Markup> {
                             tr {
                                 td { (user.job_title) }
                                 td {
-                                    @if user.firstName == VAKANT {
+                                    @if user.first_name == VAKANT {
                                         (VAKANT)
                                     } @else {
-                                        link href=(user.email) target="_top" {(user.firstName) " (" (user.nickName) ") " (user.surName)}
+                                        link href=(user.email) target="_top" {(user.first_name) " (" (user.nick_name) ") " (user.sur_name)}
                                     }
                                 }
-                                td { (user.reelectionDate) }
+                                td { (user.reelection_date) }
                             }
                         }
                     }
@@ -255,6 +241,7 @@ fn separate_file_html(title: &str, description: &str, file_id: TxtFiles) -> Resu
     return Ok(content);
 }
 
+#[derive(Clone, Debug)]
 enum TxtFiles {
     ActiveRedirections,
     JobRedirections,
@@ -267,11 +254,13 @@ enum TxtFiles {
 
 fn load(file_id: TxtFiles) -> Result<String> {
     match file_id {
-        JobRedirections => read_file("./data/aemtermails.txt"),
-        MailmanLists => read_file("./data/mailmanmails.txt"),
-        ActiveRedirections => read_file("./data/mails.txt"),
-        ElectedUserJson => read_query_with_fallback_file("./tmp/aemter.json", 170u16),
-        SecondaryElectionJson => read_query_with_fallback_file("./tmp/aemter27.json", 27u16),
+        TxtFiles::JobRedirections => read_file("./data/aemtermails.txt"),
+        TxtFiles::MailmanLists => read_file("./data/mailmanmails.txt"),
+        TxtFiles::ActiveRedirections => read_file("./data/mails.txt"),
+        TxtFiles::ElectedUserJson => read_query_with_fallback_file("./tmp/aemter.json", 170u16),
+        TxtFiles::SecondaryElectionJson => {
+            read_query_with_fallback_file("./tmp/aemter27.json", 27u16)
+        }
     }
 }
 
@@ -290,13 +279,69 @@ fn read_query_with_fallback_file(filepath: &str, sewobe_id: u16) -> Result<Strin
 }
 
 fn get_elected_users() -> Result<Vec<ElectedUser>> {
-    let primaryJson = load(TxtFiles::ElectedUserJson)?;
-    let secJson = load(TxtFiles::SecondaryElectionJson)?;
+    let primary_json = load(TxtFiles::ElectedUserJson)?;
+    let sec_json = load(TxtFiles::SecondaryElectionJson)?;
+
     let mut offices: HashMap<String, Vec<ElectedUser>> = HashMap::new();
     //TODO: parse found json manually into elected user structs
+    let users_raw: serde_json::Value = serde_json::from_str(&primary_json)?;
+    for datensatz_raw in users_raw
+        .as_object()
+        .ok_or_else(|| NoneOptionError)?
+        .values()
+    {
+        let raw_user = datensatz_raw.as_object().ok_or_else(|| NoneOptionError)?["DATENSATZ"]
+            .as_object()
+            .ok_or_else(|| NoneOptionError)?;
+        let all_amt = raw_user["AMT"]
+            .as_str()
+            .ok_or_else(|| NoneOptionError)?
+            .to_owned();
+        let aemter: Vec<String> = all_amt.split(",").map(|k| k.to_owned()).collect();
+
+        for amt in aemter {
+            if amt.trim().len() > 0 {
+                if !offices.contains_key(&amt) {
+                    offices.insert(amt.to_owned(), vec![]);
+                }
+                let ls: &mut Vec<ElectedUser> =
+                    offices.get_mut(&amt).ok_or_else(|| NoneOptionError)?;
+                ls.push(ElectedUser {
+                    job_title: amt.to_owned(),
+                    email: raw_user["E-MAIL"]
+                        .as_str()
+                        .ok_or_else(|| NoneOptionError)?
+                        .to_owned(),
+                    first_name: raw_user["VORNAME-PRIVATPERSON"]
+                        .as_str()
+                        .ok_or_else(|| NoneOptionError)?
+                        .to_owned(),
+                    sur_name: raw_user["BIERNAME"]
+                        .as_str()
+                        .ok_or_else(|| NoneOptionError)?
+                        .to_owned(),
+                    nick_name: raw_user["NACHNAME-PRIVATPERSON"]
+                        .as_str()
+                        .ok_or_else(|| NoneOptionError)?
+                        .to_owned(),
+                    reelection_date: format!(
+                        "{} {}",
+                        raw_user["NEUWAHL"]
+                            .as_str()
+                            .ok_or_else(|| NoneOptionError)?
+                            .to_owned(),
+                        raw_user["JAHR"]
+                            .as_str()
+                            .ok_or_else(|| NoneOptionError)?
+                            .to_owned()
+                    ),
+                });
+            }
+        }
+    }
 
     //after: fill up unfilled offices with VAKANT
-    let aemter_raw: serde_json::Value = serde_json::from_str(&secJson)?;
+    let aemter_raw: serde_json::Value = serde_json::from_str(&sec_json)?;
     for datensatz_raw in aemter_raw
         .as_object()
         .ok_or_else(|| NoneOptionError)?
@@ -315,10 +360,10 @@ fn get_elected_users() -> Result<Vec<ElectedUser>> {
                 vec![ElectedUser {
                     job_title: amt.to_owned(),
                     email: "".to_owned(),
-                    firstName: VAKANT.to_owned(),
-                    surName: "".to_owned(),
-                    nickName: "".to_owned(),
-                    reelectionDate: "N/A".to_owned(),
+                    first_name: VAKANT.to_owned(),
+                    sur_name: "".to_owned(),
+                    nick_name: "".to_owned(),
+                    reelection_date: "N/A".to_owned(),
                 }],
             );
         }
@@ -332,7 +377,7 @@ fn get_elected_users() -> Result<Vec<ElectedUser>> {
         .iter()
         .flat_map(|k| {
             let mut v = k.1.clone();
-            v.sort_unstable_by_key(|u| u.firstName.to_owned());
+            v.sort_unstable_by_key(|u| u.first_name.to_owned());
             return v.into_iter();
         })
         .map(|u| u.clone())
@@ -345,8 +390,8 @@ fn get_elected_users() -> Result<Vec<ElectedUser>> {
 struct ElectedUser {
     job_title: String,
     email: String,
-    firstName: String,
-    surName: String,
-    nickName: String,
-    reelectionDate: String,
+    first_name: String,
+    sur_name: String,
+    nick_name: String,
+    reelection_date: String,
 }
