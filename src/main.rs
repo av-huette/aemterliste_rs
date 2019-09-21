@@ -115,21 +115,12 @@ fn query_sewobe(id: u16) -> Result<String> {
     return Ok(txt);
 }
 
-#[get("/<name>")]
-fn hello<'a>(name: Cow<'a, str>) -> Markup {
-    html! {
-        h1 { "Hello, " (name) "!" }
-        p { "This is a paragraph!" }
-        p { "Hello World" }
-    }
-}
-
 fn main() {
     rocket::ignite()
         .manage(SharedData {
             response_cache: Mutex::new((Instant::now(), render_html_with_errors())),
         })
-        .mount("/", routes![index, hello])
+        .mount("/", routes![index])
         .launch();
 }
 
