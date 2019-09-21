@@ -10,8 +10,11 @@ RUN sudo chown -R rust:rust .
 RUN ls -la /usr/src/aemterliste_rs/target/x86_64-unknown-linux-musl/release && mkdir ./data && touch ./data/aemtermails.txt  && touch ./data/mailmanmails.txt  && touch ./data/mails.txt  && cp /usr/src/aemterliste_rs/target/x86_64-unknown-linux-musl/release/aemterliste_rs ./
 
 # Copy the statically-linked binary into a scratch container.
-FROM alpine:latest
+FROM scratch
 WORKDIR /
 COPY --from=build /usr/src/aemterliste_rs/deployment /
+# Add in certs
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER 1000
-CMD ["./aemterliste_rs"]
+EXPOSE 8000
+CMD ["SSL_CERT_DIR=/etc/ssl/certs ./aemterliste_rs"]
