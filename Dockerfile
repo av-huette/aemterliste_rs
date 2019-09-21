@@ -7,7 +7,7 @@ RUN sudo chown -R rust:rust .
 RUN cargo build --release
 WORKDIR /usr/src/aemterliste_rs/deployment
 RUN sudo chown -R rust:rust .
-RUN ls -la /usr/src/aemterliste_rs/target/x86_64-unknown-linux-musl/release && mkdir ./data && touch ./data/aemtermails.txt  && touch ./data/mailmanmails.txt  && touch ./data/mails.txt  && cp /usr/src/aemterliste_rs/target/x86_64-unknown-linux-musl/release/aemterliste_rs ./
+RUN ls -la /usr/src/aemterliste_rs/target/x86_64-unknown-linux-musl/release && mkdir ./data && touch ./data/aemtermails.txt  && touch ./data/mailmanmails.txt  && touch ./data/mails.txt && mkdir ./tmp && echo "{}" > ./tmp/aemter.json && echo "{}" > ./tmp/aemter27.json && cp /usr/src/aemterliste_rs/target/x86_64-unknown-linux-musl/release/aemterliste_rs ./
 
 # Copy the statically-linked binary into a scratch container.
 FROM scratch
