@@ -1,12 +1,15 @@
 #![recursion_limit = "1024"]
 #![feature(proc_macro_hygiene, decl_macro)]
 
+use crate::TxtFiles::SecondaryElectionJson;
 use maud::DOCTYPE;
 use maud::{html, Markup};
 use rocket::{get, routes};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::prelude::*;
 
 extern crate reqwest;
 extern crate rocket;
@@ -21,10 +24,27 @@ mod errors {
     error_chain! {
         foreign_links {
             Io(std::io::Error);
+            Env(std::env::VarError);
             Core(std::num::ParseIntError);
             Reqwest(reqwest::Error);
+            Json(serde_json::Error);
+            OptionNone(NoneOptionError);
         }
         errors { RandomResponseError(t: String) }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct NoneOptionError;
+    impl std::fmt::Display for NoneOptionError {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "Option::None was assumed to be something")
+        }
+    }
+    impl std::error::Error for NoneOptionError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            // Generic error, underlying cause isn't tracked.
+            None
+        }
     }
 }
 use errors::*;
@@ -56,13 +76,23 @@ fn read_file(filepath: &str) -> Result<String> {
     return Ok(contents);
 }
 
+fn write_file(filepath: &str, content: &str) -> Result<()> {
+    let mut f = std::fs::File::create(filepath)?;
+    let cp = content.to_owned();
+    let cp_bytes = cp.as_bytes();
+    f.write_all(cp_bytes)?;
+    return Ok(());
+}
+
 fn query_sewobe(id: u16) -> Result<String> {
-    let params = [("foo", "bar"), ("baz", "quux")];
+    let params = [
+        ("USERNAME", env::var("SEWOBEUSER")?),
+        ("PASSWORT", env::var("SEWOBEPASSWORD")?),
+        ("AUSWERTUNG_ID", id.to_string()),
+    ];
     let client = reqwest::Client::new();
-    let mut res = client
-        .post("http://httpbin.org/post")
-        .form(&params)
-        .send()?;
+    let url = env::var("SEWOBEURL")?;
+    let mut res = client.post(&url).form(&params).send()?;
     let txt = res.text()?;
     return Ok(txt);
 }
@@ -135,7 +165,10 @@ fn generate_header_html() -> Markup {
     return html! {
         meta charset="utf-8" {}
         meta name = "viewport" content = "width=device-width, initial-scale=1, maximum-scale=1" {}
-        link  rel = "stylesheet" type="text/css" href = "https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" {}
+        link rel="preload" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'" {}
+        noscript {
+            link  rel = "stylesheet" type="text/css" crossorigin="anonymous" href = "https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" {}
+        }
         title { "AVH Portal" }
     };
 }
@@ -177,15 +210,47 @@ fn make_link_list(titles: &[&'static str], urls: &[&'static str]) -> Markup {
 }
 
 fn elected_user_html() -> Result<Markup> {
+    let users = get_elected_users()?;
     let content = html! {
-        "Not yet implemented"
+        h2 { "Ämterliste" }
+        p { "Diese Liste wird auf Basis der SEWOBE-Datenbank jede Nacht neu erstellt. Unbesetzte Ämter werden nicht angezeigt." }
+        div {
+            div class = "table-responsive" {
+                table class = "table" {
+                    thead {
+                        tr {
+                            th { "Amt" }
+                            th { "Amtsträger" }
+                            th { "Neuwahl" }
+                        }
+                    }
+                    tbody {
+                        @for user in users {
+                            tr {
+                                td { (user.job_title) }
+                                td {
+                                    @if user.firstName == VAKANT {
+                                        (VAKANT)
+                                    } @else {
+                                        link href=(user.email) target="_top" {(user.firstName) " (" (user.nickName) ") " (user.surName)}
+                                    }
+                                }
+                                td { (user.reelectionDate) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     };
     return Ok(content);
 }
 
 fn separate_file_html(title: &str, description: &str, file_id: TxtFiles) -> Result<Markup> {
     let content = html! {
-        "Not yet implemented"
+        h2 { (title) }
+        p { (description) }
+        pre { (load(file_id)?) }
     };
     return Ok(content);
 }
@@ -194,4 +259,94 @@ enum TxtFiles {
     ActiveRedirections,
     JobRedirections,
     MailmanLists,
+    ElectedUserJson,
+    SecondaryElectionJson,
+}
+
+//TODO: this method requires caching logic
+
+fn load(file_id: TxtFiles) -> Result<String> {
+    match file_id {
+        JobRedirections => read_file("./data/aemtermails.txt"),
+        MailmanLists => read_file("./data/mailmanmails.txt"),
+        ActiveRedirections => read_file("./data/mails.txt"),
+        ElectedUserJson => read_query_with_fallback_file("./tmp/aemter.json", 170u16),
+        SecondaryElectionJson => read_query_with_fallback_file("./tmp/aemter27.json", 27u16),
+    }
+}
+
+/* first query sewobe, but if no good result, use local file (which stores previous successful sewobe calls) */
+fn read_query_with_fallback_file(filepath: &str, sewobe_id: u16) -> Result<String> {
+    //TODO: either add caching here or one layer above
+    let res = query_sewobe(sewobe_id)?;
+    if check_if_json(&res) {
+        //write to file
+        write_file(filepath, &res)?;
+        //return value
+        return Ok(res);
+    } else {
+        return read_file(filepath);
+    }
+}
+
+fn get_elected_users() -> Result<Vec<ElectedUser>> {
+    let primaryJson = load(TxtFiles::ElectedUserJson)?;
+    let secJson = load(TxtFiles::SecondaryElectionJson)?;
+    let mut offices: HashMap<String, Vec<ElectedUser>> = HashMap::new();
+    //TODO: parse found json manually into elected user structs
+
+    //after: fill up unfilled offices with VAKANT
+    let aemter_raw: serde_json::Value = serde_json::from_str(&secJson)?;
+    for datensatz_raw in aemter_raw
+        .as_object()
+        .ok_or_else(|| NoneOptionError)?
+        .values()
+    {
+        let datensatz = datensatz_raw.as_object().ok_or_else(|| NoneOptionError)?;
+        let amt: String = datensatz["DATENSATZ"]
+            .as_object()
+            .ok_or_else(|| NoneOptionError)?["AMT"]
+            .as_str()
+            .ok_or_else(|| NoneOptionError)?
+            .to_owned();
+        if !offices.contains_key(&amt) {
+            offices.insert(
+                amt.to_owned(),
+                vec![ElectedUser {
+                    job_title: amt.to_owned(),
+                    email: "".to_owned(),
+                    firstName: VAKANT.to_owned(),
+                    surName: "".to_owned(),
+                    nickName: "".to_owned(),
+                    reelectionDate: "N/A".to_owned(),
+                }],
+            );
+        }
+    }
+    let mut offices_list: Vec<(String, Vec<ElectedUser>)> = offices
+        .iter()
+        .map(|k| (k.0.to_owned(), k.1.clone()))
+        .collect();
+    offices_list.sort_unstable_by_key(|k| k.0.to_owned());
+    let offices_flat: Vec<ElectedUser> = offices_list
+        .iter()
+        .flat_map(|k| {
+            let mut v = k.1.clone();
+            v.sort_unstable_by_key(|u| u.firstName.to_owned());
+            return v.into_iter();
+        })
+        .map(|u| u.clone())
+        .collect();
+
+    return Ok(offices_flat);
+}
+
+#[derive(Clone, Debug)]
+struct ElectedUser {
+    job_title: String,
+    email: String,
+    firstName: String,
+    surName: String,
+    nickName: String,
+    reelectionDate: String,
 }
