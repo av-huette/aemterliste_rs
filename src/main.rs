@@ -48,8 +48,36 @@ mod errors {
 }
 use errors::*;
 
+use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
+
+struct SharedData {
+    response_cache: Mutex<(Instant, Markup)>,
+}
+
+fn get_server_cache_duration() -> Duration {
+    return Duration::from_secs(300u64);
+}
+
 #[get("/")]
-fn index() -> Markup {
+fn index(shared: rocket::State<SharedData>) -> Markup {
+    let mutex: &Mutex<(Instant, Markup)> = &(shared.response_cache);
+    let mut cache_value = mutex.lock().expect("lock shared data");
+    let now: Instant = Instant::now();
+    let before: Instant = cache_value.0;
+    if (before + get_server_cache_duration()) < now {
+        let val = render_html_with_errors();
+        let now = Instant::now();
+        let return_value = html! {(val)};
+        *cache_value = (now, val);
+        return return_value;
+    } else {
+        return html! {(cache_value.1)};
+    }
+}
+
+fn render_html_with_errors() -> Markup {
     return match generate_full_html() {
         Ok(result) => result,
         std::result::Result::Err(error) => match *error.kind() {
@@ -97,7 +125,12 @@ fn hello<'a>(name: Cow<'a, str>) -> Markup {
 }
 
 fn main() {
-    rocket::ignite().mount("/", routes![index, hello]).launch();
+    rocket::ignite()
+        .manage(SharedData {
+            response_cache: Mutex::new((Instant::now(), render_html_with_errors())),
+        })
+        .mount("/", routes![index, hello])
+        .launch();
 }
 
 fn check_if_json(s: &str) -> bool {
@@ -250,8 +283,6 @@ enum TxtFiles {
     SecondaryElectionJson,
 }
 
-//TODO: this method requires caching logic
-
 fn load(file_id: TxtFiles) -> Result<String> {
     match file_id {
         TxtFiles::JobRedirections => read_file("./data/aemtermails.txt"),
@@ -266,7 +297,6 @@ fn load(file_id: TxtFiles) -> Result<String> {
 
 /* first query sewobe, but if no good result, use local file (which stores previous successful sewobe calls) */
 fn read_query_with_fallback_file(filepath: &str, sewobe_id: u16) -> Result<String> {
-    //TODO: either add caching here or one layer above
     let res = query_sewobe(sewobe_id)?;
     if check_if_json(&res) {
         //write to file
@@ -283,7 +313,7 @@ fn get_elected_users() -> Result<Vec<ElectedUser>> {
     let sec_json = load(TxtFiles::SecondaryElectionJson)?;
 
     let mut offices: HashMap<String, Vec<ElectedUser>> = HashMap::new();
-    //TODO: parse found json manually into elected user structs
+    //parse found json manually into elected user structs
     let users_raw: serde_json::Value = serde_json::from_str(&primary_json)?;
     for datensatz_raw in users_raw
         .as_object()

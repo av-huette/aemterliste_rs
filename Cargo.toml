@@ -13,4 +13,3 @@ reqwest = "*"
 error-chain = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
-
