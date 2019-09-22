@@ -62,6 +62,7 @@ fn get_server_cache_duration() -> Duration {
 
 #[get("/")]
 fn index(shared: rocket::State<SharedData>) -> Markup {
+    let method_start = Instant::now();
     let mutex: &Mutex<(Instant, Markup)> = &(shared.response_cache);
     let mut cache_value = mutex.lock().expect("lock shared data");
     let now: Instant = Instant::now();
@@ -69,12 +70,26 @@ fn index(shared: rocket::State<SharedData>) -> Markup {
     if (before + get_server_cache_duration()) < now {
         let val = render_html_with_errors();
         let now = Instant::now();
-        let return_value = html! {(val)};
+        let return_value = html! {(val)
+        div style="display:none" { (fmt_duration(method_start, now)) "for uncached" }};
         *cache_value = (now, val);
         return return_value;
     } else {
-        return html! {(cache_value.1)};
+        let now = Instant::now();
+        let c = html! {
+        (cache_value.1)
+        div style="display:none" { (fmt_duration(method_start, now)) "for cached" }
+        };
+        return c;
     }
+}
+
+fn fmt_duration(instant1: Instant, instant2: Instant) -> String {
+    return format!(
+        "{} ms, {} micros",
+        (instant2 - instant1).subsec_millis(),
+        (instant2 - instant1).subsec_micros()
+    );
 }
 
 fn render_html_with_errors() -> Markup {
