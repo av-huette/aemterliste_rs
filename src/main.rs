@@ -4,7 +4,6 @@
 use maud::DOCTYPE;
 use maud::{html, Markup};
 use rocket::{get, routes};
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -71,24 +70,26 @@ fn index(shared: rocket::State<SharedData>) -> Markup {
         let val = render_html_with_errors();
         let now = Instant::now();
         let return_value = html! {(val)
-        div style="display:none" { (fmt_duration(method_start, now)) "for uncached" }};
+        div style="display:none" { (fmt_duration(method_start, now)) " for uncached" }};
         *cache_value = (now, val);
         return return_value;
     } else {
         let now = Instant::now();
         let c = html! {
         (cache_value.1)
-        div style="display:none" { (fmt_duration(method_start, now)) "for cached" }
+        div style="display:none" { (fmt_duration(method_start, now)) " for cached" }
         };
         return c;
     }
 }
 
 fn fmt_duration(instant1: Instant, instant2: Instant) -> String {
+    let d = instant2 - instant1;
     return format!(
-        "{} ms, {} micros",
-        (instant2 - instant1).subsec_millis(),
-        (instant2 - instant1).subsec_micros()
+        "{} s, {} ms, {} micros",
+        d.as_secs(),
+        d.subsec_millis(),
+        d.subsec_micros()
     );
 }
 
