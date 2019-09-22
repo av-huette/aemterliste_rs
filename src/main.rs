@@ -337,11 +337,11 @@ fn get_elected_users() -> Result<Vec<ElectedUser>> {
                         .as_str()
                         .ok_or_else(|| NoneOptionError)?
                         .to_owned(),
-                    sur_name: raw_user["BIERNAME"]
+                    sur_name: raw_user["NACHNAME-PRIVATPERSON"]
                         .as_str()
                         .ok_or_else(|| NoneOptionError)?
                         .to_owned(),
-                    nick_name: raw_user["NACHNAME-PRIVATPERSON"]
+                    nick_name: raw_user["BIERNAME"]
                         .as_str()
                         .ok_or_else(|| NoneOptionError)?
                         .to_owned(),
