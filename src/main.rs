@@ -258,7 +258,7 @@ fn elected_user_html() -> Result<Markup> {
                                     @if user.first_name == VAKANT {
                                         (VAKANT)
                                     } @else {
-                                        link href=(user.email) target="_top" {(user.first_name) " (" (user.nick_name) ") " (user.sur_name)}
+                                        a href=(user.email) target="_top" {(user.first_name) " (" (user.nick_name) ") " (user.sur_name)}
                                     }
                                 }
                                 td { (user.reelection_date) }
