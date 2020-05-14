@@ -59,6 +59,30 @@ fn get_server_cache_duration() -> Duration {
     return Duration::from_secs(300u64);
 }
 
+#[get("/index.html")]
+fn indexhtml(shared: rocket::State<SharedData>) -> Markup {
+    let method_start = Instant::now();
+    let mutex: &Mutex<(Instant, Markup)> = &(shared.response_cache);
+    let mut cache_value = mutex.lock().expect("lock shared data");
+    let now: Instant = Instant::now();
+    let before: Instant = cache_value.0;
+    if (before + get_server_cache_duration()) < now {
+        let val = render_html_with_errors();
+        let now = Instant::now();
+        let return_value = html! {(val)
+        div style="display:none" { (fmt_duration(method_start, now)) " for uncached" }};
+        *cache_value = (now, val);
+        return return_value;
+    } else {
+        let now = Instant::now();
+        let c = html! {
+        (cache_value.1)
+        div style="display:none" { (fmt_duration(method_start, now)) " for cached" }
+        };
+        return c;
+    }
+}
+
 #[get("/")]
 fn index(shared: rocket::State<SharedData>) -> Markup {
     let method_start = Instant::now();
@@ -136,7 +160,7 @@ fn main() {
         .manage(SharedData {
             response_cache: Mutex::new((Instant::now(), render_html_with_errors())),
         })
-        .mount("/", routes![index])
+        .mount("/", routes![index, indexhtml])
         .launch();
 }
 
