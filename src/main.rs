@@ -168,7 +168,7 @@ async fn main() -> io::Result<()> {
     .app_data(Data::new(SharedData {
         response_cache: Mutex::new((Instant::now(), errorsite.clone())),
     })) )
-        .bind(("0.0.0.0", 8080))?
+        .bind(("0.0.0.0", 8000))?
         .run()
         .await
 }
