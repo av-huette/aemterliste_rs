@@ -1,16 +1,17 @@
-#![recursion_limit = "1024"]
-#![feature(proc_macro_hygiene, decl_macro)]
 
+use actix_web::web::Data;
 use maud::DOCTYPE;
+use actix_web::{web, get, App, HttpServer, Result as AwResult};
 use maud::{html, Markup};
-use rocket::{get, routes};
+use std::io;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::prelude::*;
+use chrono::prelude::{DateTime, Utc};
 
 extern crate reqwest;
-extern crate rocket;
+extern crate chrono;
 extern crate serde;
 extern crate serde_json;
 
@@ -60,50 +61,50 @@ fn get_server_cache_duration() -> Duration {
 }
 
 #[get("/index.html")]
-fn indexhtml(shared: rocket::State<SharedData>) -> Markup {
+async fn indexhtml(shared: web::Data<SharedData>) -> AwResult<Markup> {
     let method_start = Instant::now();
     let mutex: &Mutex<(Instant, Markup)> = &(shared.response_cache);
     let mut cache_value = mutex.lock().expect("lock shared data");
     let now: Instant = Instant::now();
     let before: Instant = cache_value.0;
     if (before + get_server_cache_duration()) < now {
-        let val = render_html_with_errors();
+        let val = render_html_with_errors().await;
         let now = Instant::now();
         let return_value = html! {(val)
         div style="display:none" { (fmt_duration(method_start, now)) " for uncached" }};
         *cache_value = (now, val);
-        return return_value;
+        return Ok(return_value);
     } else {
         let now = Instant::now();
         let c = html! {
         (cache_value.1)
         div style="display:none" { (fmt_duration(method_start, now)) " for cached" }
         };
-        return c;
+        return Ok(c);
     }
 }
 
 #[get("/")]
-fn index(shared: rocket::State<SharedData>) -> Markup {
+async fn index(shared: web::Data<SharedData>) -> AwResult<Markup> {
     let method_start = Instant::now();
     let mutex: &Mutex<(Instant, Markup)> = &(shared.response_cache);
     let mut cache_value = mutex.lock().expect("lock shared data");
     let now: Instant = Instant::now();
     let before: Instant = cache_value.0;
     if (before + get_server_cache_duration()) < now {
-        let val = render_html_with_errors();
+        let val = render_html_with_errors().await;
         let now = Instant::now();
         let return_value = html! {(val)
         div style="display:none" { (fmt_duration(method_start, now)) " for uncached" }};
         *cache_value = (now, val);
-        return return_value;
+        return Ok(return_value);
     } else {
         let now = Instant::now();
         let c = html! {
         (cache_value.1)
         div style="display:none" { (fmt_duration(method_start, now)) " for cached" }
         };
-        return c;
+        return Ok(c);
     }
 }
 
@@ -117,8 +118,8 @@ fn fmt_duration(instant1: Instant, instant2: Instant) -> String {
     );
 }
 
-fn render_html_with_errors() -> Markup {
-    return match generate_full_html() {
+async fn render_html_with_errors() -> Markup {
+    return match generate_full_html().await {
         Ok(result) => result,
         std::result::Result::Err(error) => match *error.kind() {
             _ => {
@@ -131,7 +132,9 @@ fn render_html_with_errors() -> Markup {
 
 fn read_file(filepath: &str) -> Result<String> {
     let contents = fs::read_to_string(filepath)?;
-    return Ok(contents);
+    let metadata = fs::metadata(filepath)?;
+    let datetime: DateTime<Utc> = metadata.modified()?.into();
+    return Ok(format!("{}\nAktualisiert: {}\n", contents, datetime.format("%+")));
 }
 
 fn write_file(filepath: &str, content: &str) -> Result<()> {
@@ -142,7 +145,7 @@ fn write_file(filepath: &str, content: &str) -> Result<()> {
     return Ok(());
 }
 
-fn query_sewobe(id: u16) -> Result<String> {
+async fn query_sewobe(id: u16) -> Result<String> {
     let params = [
         ("USERNAME", env::var("SEWOBEUSER")?),
         ("PASSWORT", env::var("SEWOBEPASSWORD")?),
@@ -150,18 +153,24 @@ fn query_sewobe(id: u16) -> Result<String> {
     ];
     let client = reqwest::Client::new();
     let url = env::var("SEWOBEURL")?;
-    let mut res = client.post(&url).form(&params).send()?;
-    let txt = res.text()?;
+    let res = client.post(&url).form(&params).send().await?;
+    let txt = res.text().await?;
     return Ok(txt);
 }
 
-fn main() {
-    rocket::ignite()
-        .manage(SharedData {
-            response_cache: Mutex::new((Instant::now(), render_html_with_errors())),
-        })
-        .mount("/", routes![index, indexhtml])
-        .launch();
+
+#[actix_web::main]
+async fn main() -> io::Result<()> {
+    let errorsite = render_html_with_errors().await;
+    std::env::set_var("RUST_LOG", "debug");
+    env_logger::init();
+    HttpServer::new(move || App::new().service(index)
+    .app_data(Data::new(SharedData {
+        response_cache: Mutex::new((Instant::now(), errorsite.clone())),
+    })) )
+        .bind(("0.0.0.0", 8080))?
+        .run()
+        .await
 }
 
 fn check_if_json(s: &str) -> bool {
@@ -194,7 +203,7 @@ const SONSTIGE_LINKS_URL: &'static [&'static str] = &[
 
 const VAKANT: &'static str = "vakant";
 
-fn generate_full_html() -> Result<Markup> {
+async fn generate_full_html() -> Result<Markup> {
     //add header
     //add body
     let content = html! {
@@ -204,7 +213,7 @@ fn generate_full_html() -> Result<Markup> {
                 (generate_header_html())
             }
             body {
-                (generate_body_html()?)
+                (generate_body_html().await?)
             }
         }
     };
@@ -223,7 +232,7 @@ fn generate_header_html() -> Markup {
     };
 }
 
-fn generate_body_html() -> Result<Markup> {
+async fn generate_body_html() -> Result<Markup> {
     let content = html! {
         div class="container" {
             div class="preamble" {
@@ -234,24 +243,24 @@ fn generate_body_html() -> Result<Markup> {
                 h2 {"Sonstige Links"}
                 (make_link_list(SONSTIGE_LINKS_TITLE, SONSTIGE_LINKS_URL))
             }
-            (elected_user_html()?)
+            (elected_user_html().await?)
             hr {}
-            (separate_file_html("Mailinglisten / aktive Weiterleitungen", r#"Dies sind die aktiven Mail-Weiterleitungen auf dem av-huette-Mailserver. Diese Liste ist im Format "x:y" wobei alle Mails an "x@av-huette.de" an Adresse "y" weitergeleitet werden. Diese Liste wird jeden Tag um 2 Uhr nachts automatisch neu generiert auf Basis der SEWOBE Datenbank."#, TxtFiles::ActiveRedirections)?)
-            (separate_file_html("Mailadressen der Ämter", r#"Dies sind die aktiven Mail-Weiterleitungen der Ämter auf dem av-huette-Mailserver. Diese Liste ist im Format "x:y" wobei alle Mails an "x@av-huette.de" an Adresse "y" weitergeleitet werden. Diese Liste wird jeden Tag um 2 Uhr nachts automatisch neu generiert auf Basis der SEWOBE Datenbank."#, TxtFiles::JobRedirections)?)
-            (separate_file_html("Aktive Mailman-Verteiler", r#"Dies sind die aktiven Mailman-Verteilerlisten ( = was für Verteiler gibt es überhaupt) auf dem av-huette-Mailserver. Diese Liste ist im Format "x:y" wobei alle Mails an "x@av-huette.de" an Adresse "y" weitergeleitet werden."#, TxtFiles::MailmanLists)?)
+            (separate_file_html("Mailinglisten / aktive Weiterleitungen", r#"Dies sind die aktiven Mail-Weiterleitungen auf dem av-huette-Mailserver. Diese Liste ist im Format "x:y" wobei alle Mails an "x@av-huette.de" an Adresse "y" weitergeleitet werden. Diese Liste wird jeden Tag um 2 Uhr nachts automatisch neu generiert auf Basis der SEWOBE Datenbank."#, TxtFiles::ActiveRedirections).await?)
+            (separate_file_html("Mailadressen der Ämter", r#"Dies sind die aktiven Mail-Weiterleitungen der Ämter auf dem av-huette-Mailserver. Diese Liste ist im Format "x:y" wobei alle Mails an "x@av-huette.de" an Adresse "y" weitergeleitet werden. Diese Liste wird jeden Tag um 2 Uhr nachts automatisch neu generiert auf Basis der SEWOBE Datenbank."#, TxtFiles::JobRedirections).await?)
+            (separate_file_html("Aktive Mailman-Verteiler", r#"Dies sind die aktiven Mailman-Verteilerlisten ( = was für Verteiler gibt es überhaupt) auf dem av-huette-Mailserver. Diese Liste ist im Format "x:y" wobei alle Mails an "x@av-huette.de" an Adresse "y" weitergeleitet werden."#, TxtFiles::MailmanLists).await?)
         }
     };
     return Ok(content);
 }
 
 fn make_link_list(titles: &[&'static str], urls: &[&'static str]) -> Markup {
-    //let indices = (0..(titles.len())).collect::<Vec<usize>>();
+    let indices = (0..(titles.len())).collect::<Vec<usize>>();
     return html! {
         ul {
-            @for index in 0..(titles.len()) {
+            @for idx in &indices {
                 li  {
-                    a href=(urls[index]) {
-                        (titles[index])
+                    a href=(urls[*idx]) {
+                        (titles[*idx])
                     }
                 }
             }
@@ -259,8 +268,8 @@ fn make_link_list(titles: &[&'static str], urls: &[&'static str]) -> Markup {
     };
 }
 
-fn elected_user_html() -> Result<Markup> {
-    let users = get_elected_users()?;
+async fn elected_user_html() -> Result<Markup> {
+    let users = get_elected_users().await?;
     let content = html! {
         h2 { "Ämterliste" }
         p { "Diese Liste wird auf Basis der SEWOBE-Datenbank jede Nacht neu erstellt. Unbesetzte Ämter werden nicht angezeigt." }
@@ -296,11 +305,11 @@ fn elected_user_html() -> Result<Markup> {
     return Ok(content);
 }
 
-fn separate_file_html(title: &str, description: &str, file_id: TxtFiles) -> Result<Markup> {
+async fn separate_file_html(title: &str, description: &str, file_id: TxtFiles) -> Result<Markup> {
     let content = html! {
         h2 { (title) }
         p { (description) }
-        pre { (load(file_id)?) }
+        pre { (load(file_id).await?) }
     };
     return Ok(content);
 }
@@ -314,21 +323,21 @@ enum TxtFiles {
     SecondaryElectionJson,
 }
 
-fn load(file_id: TxtFiles) -> Result<String> {
+async fn load(file_id: TxtFiles) -> Result<String> {
     match file_id {
         TxtFiles::JobRedirections => read_file("./data/aemtermails.txt"),
         TxtFiles::MailmanLists => read_file("./data/mailmanmails.txt"),
         TxtFiles::ActiveRedirections => read_file("./data/mails.txt"),
-        TxtFiles::ElectedUserJson => read_query_with_fallback_file("./tmp/aemter.json", 170u16),
+        TxtFiles::ElectedUserJson => read_query_with_fallback_file("./tmp/aemter.json", 170u16).await,
         TxtFiles::SecondaryElectionJson => {
-            read_query_with_fallback_file("./tmp/aemter27.json", 27u16)
+            read_query_with_fallback_file("./tmp/aemter27.json", 27u16).await
         }
     }
 }
 
 /* first query sewobe, but if no good result, use local file (which stores previous successful sewobe calls) */
-fn read_query_with_fallback_file(filepath: &str, sewobe_id: u16) -> Result<String> {
-    let res = query_sewobe(sewobe_id)?;
+async fn read_query_with_fallback_file(filepath: &str, sewobe_id: u16) -> Result<String> {
+    let res = query_sewobe(sewobe_id).await?;
     if check_if_json(&res) {
         //write to file
         write_file(filepath, &res)?;
@@ -339,9 +348,9 @@ fn read_query_with_fallback_file(filepath: &str, sewobe_id: u16) -> Result<Strin
     }
 }
 
-fn get_elected_users() -> Result<Vec<ElectedUser>> {
-    let primary_json = load(TxtFiles::ElectedUserJson)?;
-    let sec_json = load(TxtFiles::SecondaryElectionJson)?;
+async fn get_elected_users() -> Result<Vec<ElectedUser>> {
+    let primary_json = load(TxtFiles::ElectedUserJson).await?;
+    let sec_json = load(TxtFiles::SecondaryElectionJson).await?;
 
     let mut offices: HashMap<String, Vec<ElectedUser>> = HashMap::new();
     //parse found json manually into elected user structs

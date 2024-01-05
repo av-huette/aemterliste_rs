@@ -12,9 +12,11 @@ codegen-units = 1
 
 
 [dependencies]
-rocket = { version = "*" }
-maud = { version = "*", features = ["rocket"] }
+actix-web = "4"
+maud = { version = "*", features = ["actix-web"] }
 reqwest = "*"
+chrono = "*"
 error-chain = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
+env_logger = "0.10.0"
