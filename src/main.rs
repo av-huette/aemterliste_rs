@@ -135,7 +135,7 @@ fn read_file(filepath: &str) -> Result<String> {
     let datetime: DateTime<Utc> = metadata.modified()?.into();
     return Ok(format!(
         "Zuletzt aktualisiert: {}\n\n{}",
-        datetime.format("%Y-%m-%d %H:%M:%S"),
+        datetime..format("%Y-%m-%d %H:%M:%S %:::z"),
         contents
     ));
 }
@@ -275,7 +275,7 @@ async fn elected_user_html() -> Result<Markup> {
     let users = get_elected_users().await?;
     let content = html! {
         h2 { "Ämterliste" }
-        p { (format!("Diese Liste wird auf Basis der SEWOBE-Datenbank erstellt. Zuletzt aktualisiert: {}", Local::now().format("%Y-%m-%d %H:%M:%S"))) }
+        p { (format!("Diese Liste wird auf Basis der SEWOBE-Datenbank erstellt. Zuletzt aktualisiert: {}", Local::now().format("%Y-%m-%d %H:%M:%S %:::z"))) }
         div {
             div class = "table-responsive" {
                 table class = "table" {
