@@ -1,17 +1,16 @@
-
 use actix_web::web::Data;
+use actix_web::{get, web, App, HttpServer, Result as AwResult};
+use chrono::prelude::{DateTime, Utc, Local};
 use maud::DOCTYPE;
-use actix_web::{web, get, App, HttpServer, Result as AwResult};
 use maud::{html, Markup};
-use std::io;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io;
 use std::io::prelude::*;
-use chrono::prelude::{DateTime, Utc};
 
-extern crate reqwest;
 extern crate chrono;
+extern crate reqwest;
 extern crate serde;
 extern crate serde_json;
 
@@ -134,7 +133,11 @@ fn read_file(filepath: &str) -> Result<String> {
     let contents = fs::read_to_string(filepath)?;
     let metadata = fs::metadata(filepath)?;
     let datetime: DateTime<Utc> = metadata.modified()?.into();
-    return Ok(format!("{}\nAktualisiert: {}\n", contents, datetime.format("%+")));
+    return Ok(format!(
+        "Zuletzt aktualisiert: {}\n\n{}",
+        datetime.format("%Y-%m-%d %H:%M:%S"),
+        contents
+    ));
 }
 
 fn write_file(filepath: &str, content: &str) -> Result<()> {
@@ -158,19 +161,19 @@ async fn query_sewobe(id: u16) -> Result<String> {
     return Ok(txt);
 }
 
-
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     let errorsite = render_html_with_errors().await;
     std::env::set_var("RUST_LOG", "debug");
     env_logger::init();
-    HttpServer::new(move || App::new().service(index)
-    .app_data(Data::new(SharedData {
-        response_cache: Mutex::new((Instant::now(), errorsite.clone())),
-    })) )
-        .bind(("0.0.0.0", 8000))?
-        .run()
-        .await
+    HttpServer::new(move || {
+        App::new().service(index).app_data(Data::new(SharedData {
+            response_cache: Mutex::new((Instant::now(), errorsite.clone())),
+        }))
+    })
+    .bind(("0.0.0.0", 8000))?
+    .run()
+    .await
 }
 
 fn check_if_json(s: &str) -> bool {
@@ -272,7 +275,7 @@ async fn elected_user_html() -> Result<Markup> {
     let users = get_elected_users().await?;
     let content = html! {
         h2 { "Ämterliste" }
-        p { "Diese Liste wird auf Basis der SEWOBE-Datenbank jede Nacht neu erstellt. Unbesetzte Ämter werden nicht angezeigt." }
+        p { (format!("Diese Liste wird auf Basis der SEWOBE-Datenbank erstellt. Zuletzt aktualisiert: {}", Local::now().format("%Y-%m-%d %H:%M:%S"))) }
         div {
             div class = "table-responsive" {
                 table class = "table" {
@@ -328,7 +331,9 @@ async fn load(file_id: TxtFiles) -> Result<String> {
         TxtFiles::JobRedirections => read_file("./data/aemtermails.txt"),
         TxtFiles::MailmanLists => read_file("./data/mailmanmails.txt"),
         TxtFiles::ActiveRedirections => read_file("./data/mails.txt"),
-        TxtFiles::ElectedUserJson => read_query_with_fallback_file("./tmp/aemter.json", 170u16).await,
+        TxtFiles::ElectedUserJson => {
+            read_query_with_fallback_file("./tmp/aemter.json", 170u16).await
+        }
         TxtFiles::SecondaryElectionJson => {
             read_query_with_fallback_file("./tmp/aemter27.json", 27u16).await
         }
