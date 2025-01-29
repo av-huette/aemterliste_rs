@@ -383,7 +383,7 @@ async fn get_elected_users() -> Result<Vec<ElectedUser>> {
                     offices.get_mut(&amt).ok_or_else(|| NoneOptionError)?;
                 ls.push(ElectedUser {
                     job_title: amt.to_owned(),
-                    email: raw_user["E-MAIL"]
+                    email: raw_user["E-MAIL(PRIMAER)"]
                         .as_str()
                         .ok_or_else(|| NoneOptionError)?
                         .to_owned(),
